@@ -1,0 +1,14 @@
+{
+    "name": "vendor/amocrm-integration",
+    "description": "AmoCRM Integration with SRP architecture",
+    "type": "project",
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
+    },
+    "require": {
+        "php": "^7.4|^8.2"
+    },
+    "minimum-stability": "stable"
+}

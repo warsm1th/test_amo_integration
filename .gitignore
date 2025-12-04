@@ -1,0 +1,23 @@
+# Dependencies
+/vendor/
+composer.lock
+
+# Configuration files with sensitive data
+/config/amocrm_config.php
+TOKEN.txt
+ERROR_LOG.txt
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
