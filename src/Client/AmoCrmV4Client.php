@@ -22,7 +22,20 @@ class AmoCrmV4Client
         $this->redirectUri = $config['redirect_uri'];
         $this->tokenFile = $config['token_file'];
 
-        $this->initializeToken();
+        if (file_exists($this->tokenFile)) {
+            $tokenData = json_decode(file_get_contents($this->tokenFile), true);
+            
+            if ($tokenData['expires_in'] < time()) {
+                // Токен истек - обновляем
+                $this->refreshAccessToken($tokenData['refresh_token']);
+            } else {
+                // Токен валиден
+                $this->accessToken = $tokenData['access_token'];
+            }
+        } else {
+            // Токена нет - получаем новый
+            $this->requestAccessToken();
+        }
     }
 
     private function initializeToken(): void
@@ -58,7 +71,7 @@ class AmoCrmV4Client
 
     private function makeTokenRequest(array $data): void
     {
-        $url = "https://{$this->subDomain}.amocrm.ru/oauth2/access_token";
+        $link = 'https://' . $this->subDomain . '.amocrm.ru/oauth2/access_token';
         
         $requestData = array_merge([
             'client_id' => $this->clientId,
@@ -66,8 +79,49 @@ class AmoCrmV4Client
             'redirect_uri' => $this->redirectUri
         ], $data);
 
-        $response = $this->executeCurlRequest($url, 'POST', $requestData);
+        $curl = curl_init();
         
+        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($curl, CURLOPT_USERAGENT, 'amoCRM-oAuth-client/1.0');
+        curl_setopt($curl, CURLOPT_URL, $link);
+        curl_setopt($curl, CURLOPT_HTTPHEADER, ['Content-Type:application/json']);
+        curl_setopt($curl, CURLOPT_HEADER, false);
+        curl_setopt($curl, CURLOPT_CUSTOMREQUEST, 'POST');
+        curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($requestData));
+        curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, 1);
+        curl_setopt($curl, CURLOPT_SSL_VERIFYHOST, 2);
+        
+        $out = curl_exec($curl);
+        $code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        curl_close($curl);
+        
+        $code = (int)$code;
+        $errors = [
+            400 => 'Bad request',
+            401 => 'Unauthorized',
+            403 => 'Forbidden',
+            404 => 'Not found',
+            500 => 'Internal server error',
+            502 => 'Bad gateway',
+            503 => 'Service unavailable',
+        ];
+
+        try {
+            if ($code < 200 || $code > 204) {
+                throw new Exception(isset($errors[$code]) ? $errors[$code] : 'Undefined error', $code);
+            }
+        } catch (Exception $e) {
+            echo "Response from API: " . $out . "\n";
+            throw new Exception('Ошибка: ' . $e->getMessage() . PHP_EOL . 'Код ошибки: ' . $e->getCode());
+        }
+
+        $response = json_decode($out, true);
+        
+        if (!$response || !isset($response['access_token'])) {
+            echo "Raw API Response: " . $out . "\n";
+            throw new Exception('Неверный ответ от API при получении токена');
+        }
+
         $this->accessToken = $response['access_token'];
         $this->saveToken($response);
     }
@@ -193,7 +247,17 @@ class AmoCrmV4Client
             $params['limit'] = $limit;
             
             $response = $this->get($endpoint, $params);
-            $items = $response['_embedded'][$endpoint] ?? [];
+            
+            // Для вложенных эндпоинтов типа leads/{id}/notes
+            if (strpos($endpoint, '/') !== false) {
+                // Разбиваем эндпоинт на части
+                $parts = explode('/', $endpoint);
+                $entity = end($parts); // 'notes'
+                $items = $response['_embedded'][$entity] ?? $response ?? [];
+            } else {
+                // Для простых эндпоинтов типа 'leads', 'contacts'
+                $items = $response['_embedded'][$endpoint] ?? [];
+            }
             
             if (empty($items)) {
                 break;

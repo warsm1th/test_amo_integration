@@ -17,7 +17,12 @@ class NoteService
 
     public function getLeadNotes(int $leadId): array
     {
-        return $this->amoClient->getAll("leads/{$leadId}/notes");
+        try {
+            return $this->amoClient->getAll("leads/{$leadId}/notes");
+        } catch (\Exception $e) {
+            error_log("Ошибка получения примечаний для сделки {$leadId}: " . $e->getMessage());
+            return [];
+        }
     }
 
     public function copyNotes(int $sourceLeadId, int $targetLeadId): int
@@ -40,29 +45,43 @@ class NoteService
             return 0;
         }
 
-        $this->amoClient->post('leads/notes', $preparedNotes);
-        return count($preparedNotes);
+        // Используем правильный эндпоинт для создания примечаний
+        $response = $this->amoClient->post('leads/notes', $preparedNotes);
+        
+        // Проверяем, что примечания были созданы
+        if (isset($response['_embedded']['notes'])) {
+            return count($response['_embedded']['notes']);
+        }
+        
+        return 0;
     }
 
-    private function prepareNoteForCopy(array $note, int $targetLeadId): ?array
+    private function prepareNoteForCopy(array $note, int $targetLeadId)
     {
+        // Всегда создаем примечание, даже если не все поля идеальны
         $newNote = [
             "entity_id" => $targetLeadId,
-            "note_type" => $note['note_type'],
-            "params" => $note['params'] ?? [],
-            "created_by" => $note['created_by'] ?? 0
+            "note_type" => $note['note_type']
         ];
-
-        if (!empty($note['text'])) {
-            $newNote['text'] = $note['text'];
-        } elseif (!empty($note['params']['text'])) {
-            $newNote['params']['text'] = $note['params']['text'];
+        
+        // Создаем params с текстом
+        $newNote['params'] = [];
+        
+        // Копируем все params из исходного примечания
+        if (isset($note['params']) && is_array($note['params'])) {
+            $newNote['params'] = $note['params'];
         }
-
-        if (empty($newNote['text']) && empty($newNote['params'])) {
-            return null;
+        
+        // Если нет текста в params, добавляем заглушку
+        if (!isset($newNote['params']['text']) || empty($newNote['params']['text'])) {
+            $newNote['params']['text'] = 'Примечание из сделки-донора';
         }
-
+        
+        // Добавляем дополнительные поля если есть
+        if (isset($note['created_by'])) {
+            $newNote['created_by'] = $note['created_by'];
+        }
+        
         return $newNote;
     }
 }

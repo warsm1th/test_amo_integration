@@ -33,24 +33,56 @@ class TaskService
 
         $preparedTasks = [];
         foreach ($tasks as $task) {
-            $preparedTasks[] = $this->prepareTaskForCopy($task, $targetLeadId);
+            $preparedTask = $this->prepareTaskForCopy($task, $targetLeadId);
+            if ($preparedTask !== null) {
+                $preparedTasks[] = $preparedTask;
+            }
+        }
+
+        if (empty($preparedTasks)) {
+            return 0;
         }
 
         $this->amoClient->post('tasks', $preparedTasks);
         return count($preparedTasks);
     }
 
-    private function prepareTaskForCopy(array $task, int $targetLeadId): array
+    private function prepareTaskForCopy(array $task, int $targetLeadId): ?array
     {
-        return [
-            "task_type_id" => $task['task_type_id'],
-            "text" => $task['text'],
-            "complete_till" => $task['complete_till'],
+        // Обработка текста задачи - обязательное поле
+        if (empty($task['text']) || trim($task['text']) === '') {
+            $taskText = 'Задача из сделки-донора';
+        } else {
+            $taskText = $task['text'];
+        }
+
+        // Тип задачи по умолчанию
+        $taskTypeId = $task['task_type_id'] ?? 1;
+
+        // Обработка даты выполнения
+        if (empty($task['complete_till'])) {
+            $completeTill = time() + 86400;
+        } else {
+            $completeTill = $task['complete_till'];
+            
+            // Если дата в прошлом, ставим на завтра
+            if ($completeTill < time()) {
+                $completeTill = time() + 86400;
+            }
+        }
+
+        // Подготавливаем данные задачи
+        $preparedTask = [
+            "task_type_id" => $taskTypeId,
+            "text" => $taskText,
+            "complete_till" => $completeTill,
             "entity_id" => $targetLeadId,
             "entity_type" => "leads",
             "responsible_user_id" => $task['responsible_user_id'] ?? 0,
             "created_by" => $task['created_by'] ?? 0,
-            "is_completed" => $task['is_completed']
+            "is_completed" => $task['is_completed'] ?? false
         ];
+
+        return $preparedTask;
     }
 }

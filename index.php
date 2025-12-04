@@ -1,9 +1,4 @@
 <?php
-
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-
 require_once __DIR__ . '/vendor/autoload.php';
 
 use App\Client\AmoCrmV4Client;
@@ -14,88 +9,70 @@ use App\Services\TaskService;
 // Загрузка конфигурации
 $config = require_once __DIR__ . '/config/amocrm_config.php';
 
-header('Content-Type: text/html; charset=utf-8');
+echo "<pre>";
 
 try {
     $amoClient = new AmoCrmV4Client($config);
     
-    // Определяем запрашиваемый эндпоинт
     $action = $_GET['action'] ?? '';
     
-    switch ($action) {
-        case 'move':
-            require_once __DIR__ . '/endpoints/move_leads.php';
-            break;
+    if ($action === 'move') {
+        $leadService = new LeadService($amoClient, $config);
+        
+        $leads = $leadService->findLeadsWithBudgetGreaterThan(
+            $config['pipeline_id'],
+            $config['statuses']['application'],
+            $config['budget_threshold']
+        );
+        
+        echo "Найдено сделок > 5000: " . count($leads) . "\n";
+        
+        foreach ($leads as $lead) {
+            $leadService->moveLeadToStatus($lead['id'], $config['statuses']['waiting']);
+            echo "Перемещена сделка ID: {$lead['id']}\n";
+        }
+        
+    } elseif ($action === 'copy') {
+        $leadService = new LeadService($amoClient, $config);
+        $noteService = new NoteService($amoClient);
+        $taskService = new TaskService($amoClient);
+        
+        $leads = $leadService->findLeadsWithExactBudget(
+            $config['pipeline_id'],
+            $config['statuses']['confirmed'],
+            $config['budget_specific']
+        );
+        
+        echo "Найдено сделок = 4999: " . count($leads) . "\n";
+        
+        foreach ($leads as $lead) {
+            $newLeadId = $leadService->copyLead($lead, $config['statuses']['waiting']);
+            echo "Создана копия сделки ID: {$lead['id']} -> {$newLeadId}\n";
             
-        case 'copy':
-            require_once __DIR__ . '/endpoints/copy_leads.php';
-            break;
-            
-        default:
-            echo "<!DOCTYPE html>
-            <html lang='ru'>
-            <head>
-                <meta charset='UTF-8'>
-                <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-                <title>AmoCRM Integration API</title>
-                <style>
-                    body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
-                    h1 { color: #333; }
-                    ul { list-style-type: none; padding: 0; }
-                    li { margin: 10px 0; }
-                    a { 
-                        display: inline-block; 
-                        padding: 10px 20px; 
-                        background: #4CAF50; 
-                        color: white; 
-                        text-decoration: none; 
-                        border-radius: 5px; 
-                    }
-                    a:hover { background: #45a049; }
-                    .container { max-width: 800px; margin: 0 auto; }
-                    .info { background: #f4f4f4; padding: 20px; border-radius: 5px; margin-top: 20px; }
-                </style>
-            </head>
-            <body>
-                <div class='container'>
-                    <h1>🔄 AmoCRM Integration API</h1>
-                    <p>Доступные эндпоинты:</p>
-                    <ul>
-                        <li><a href='?action=move'>/index.php?action=move</a> - Переместить сделки с бюджетом > 5000</li>
-                        <li><a href='?action=copy'>/index.php?action=copy</a> - Скопировать сделки с бюджетом = 4999</li>
-                    </ul>
-                    
-                    <div class='info'>
-                        <h3>Информация:</h3>
-                        <p><strong>Воронка ID:</strong> {$config['pipeline_id']}</p>
-                        <p><strong>Этапы:</strong></p>
-                        <ul>
-                            <li>Заявка: {$config['statuses']['application']}</li>
-                            <li>Ожидание клиента: {$config['statuses']['waiting']}</li>
-                            <li>Клиент подтвердил: {$config['statuses']['confirmed']}</li>
-                        </ul>
-                    </div>
-                </div>
-            </body>
-            </html>";
-            break;
+            $noteService->copyNotes($lead['id'], $newLeadId);
+            $taskService->copyTasks($lead['id'], $newLeadId);
+        }
+        
+    } else {
+        // Главная страница
+            echo "<h1>AmoCRM Integration API</h1>";
+            echo "<p>Доступные эндпоинты:</p>";
+            echo "<ul>";
+            echo "<li><a href='?action=move'>/index.php?action=move</a> - Переместить сделки с бюджетом > 5000</li>";
+            echo "<li><a href='?action=copy'>/index.php?action=copy</a> - Скопировать сделки с бюджетом = 4999</li>";
+            echo "</ul>";
     }
     
 } catch (Exception $e) {
-    $logMessage = '[' . date('Y-m-d H:i:s') . '] Error: ' . $e->getMessage() . 
-                  ' File: ' . $e->getFile() . 
-                  ' Line: ' . $e->getLine() . PHP_EOL;
+    echo "❌ Ошибка: " . $e->getMessage() . "\n";
     
-    error_log($logMessage, 3, $config['error_log']);
-    
-    http_response_code(500);
-    echo "<h1>Ошибка 500</h1>";
-    echo "<p>Внутренняя ошибка сервера. Подробности в логе.</p>";
-    
-    if (ini_get('display_errors')) {
-        echo "<pre>Debug Info:\n";
-        echo "Message: " . htmlspecialchars($e->getMessage()) . "\n";
-        echo "File: " . $e->getFile() . "\n";
-        echo "Line: " . $e->getLine() . "</pre>";
+    // Если проблема с авторизацией
+    if (strpos($e->getMessage(), 'Authorization code has been revoked') !== false) {
+        echo "\n⚠ Нужно обновить authorization code в config/amocrm_config.php\n";
     }
+    
+    // Записываем в лог
+    file_put_contents($config['error_log'], date('Y-m-d H:i:s') . ' - ' . $e->getMessage() . "\n", FILE_APPEND);
 }
+
+echo "</pre>";
