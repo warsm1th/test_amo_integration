@@ -1,10 +1,9 @@
 <?php
-// Включение отображения ошибок (только для разработки)
+
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
-// Загрузка автозагрузчика Composer
 require_once __DIR__ . '/vendor/autoload.php';
 
 use App\Client\AmoCrmV4Client;
@@ -18,7 +17,6 @@ $config = require_once __DIR__ . '/config/amocrm_config.php';
 header('Content-Type: text/html; charset=utf-8');
 
 try {
-    // Инициализация клиента
     $amoClient = new AmoCrmV4Client($config);
     
     // Определяем запрашиваемый эндпоинт
@@ -84,14 +82,12 @@ try {
     }
     
 } catch (Exception $e) {
-    // Логирование ошибки
     $logMessage = '[' . date('Y-m-d H:i:s') . '] Error: ' . $e->getMessage() . 
                   ' File: ' . $e->getFile() . 
                   ' Line: ' . $e->getLine() . PHP_EOL;
     
     error_log($logMessage, 3, $config['error_log']);
     
-    // Пользовательское сообщение
     http_response_code(500);
     echo "<h1>Ошибка 500</h1>";
     echo "<p>Внутренняя ошибка сервера. Подробности в логе.</p>";

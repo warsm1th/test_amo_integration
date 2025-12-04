@@ -3,10 +3,6 @@ namespace App\Client;
 
 use Exception;
 
-/**
- * Базовый клиент для работы с API amoCRM v4
- * Отвечает только за авторизацию и выполнение HTTP-запросов
- */
 class AmoCrmV4Client
 {
     private string $subDomain;
