@@ -1,5 +1,5 @@
 <?php
-namespace App\Client;
+namespace App\Clients;
 
 use Exception;
 
@@ -22,20 +22,7 @@ class AmoCrmV4Client
         $this->redirectUri = $config['redirect_uri'];
         $this->tokenFile = $config['token_file'];
 
-        if (file_exists($this->tokenFile)) {
-            $tokenData = json_decode(file_get_contents($this->tokenFile), true);
-            
-            if ($tokenData['expires_in'] < time()) {
-                // Токен истек - обновляем
-                $this->refreshAccessToken($tokenData['refresh_token']);
-            } else {
-                // Токен валиден
-                $this->accessToken = $tokenData['access_token'];
-            }
-        } else {
-            // Токена нет - получаем новый
-            $this->requestAccessToken();
-        }
+        $this->initializeToken();
     }
 
     private function initializeToken(): void
@@ -106,20 +93,14 @@ class AmoCrmV4Client
             503 => 'Service unavailable',
         ];
 
-        try {
-            if ($code < 200 || $code > 204) {
-                throw new Exception(isset($errors[$code]) ? $errors[$code] : 'Undefined error', $code);
-            }
-        } catch (Exception $e) {
-            echo "Response from API: " . $out . "\n";
-            throw new Exception('Ошибка: ' . $e->getMessage() . PHP_EOL . 'Код ошибки: ' . $e->getCode());
+        if ($code < 200 || $code > 204) {
+            throw new Exception($errors[$code] ?? 'Undefined error', $code);
         }
 
         $response = json_decode($out, true);
         
         if (!$response || !isset($response['access_token'])) {
-            echo "Raw API Response: " . $out . "\n";
-            throw new Exception('Неверный ответ от API при получении токена');
+            throw new Exception('Invalid API response when getting token');
         }
 
         $this->accessToken = $response['access_token'];
@@ -140,20 +121,59 @@ class AmoCrmV4Client
 
     public function get(string $endpoint, array $params = []): array
     {
-        $url = $this->buildUrl($endpoint, $params);
-        return $this->executeApiRequest($url, 'GET');
+        return $this->executeApiRequest(
+            $this->buildUrl($endpoint, $params),
+            'GET'
+        );
     }
 
     public function post(string $endpoint, array $data = []): array
     {
-        $url = $this->buildUrl($endpoint);
-        return $this->executeApiRequest($url, 'POST', $data);
+        return $this->executeApiRequest(
+            $this->buildUrl($endpoint),
+            'POST',
+            $data
+        );
     }
 
     public function patch(string $endpoint, array $data = []): array
     {
-        $url = $this->buildUrl($endpoint);
-        return $this->executeApiRequest($url, 'PATCH', $data);
+        return $this->executeApiRequest(
+            $this->buildUrl($endpoint),
+            'PATCH',
+            $data
+        );
+    }
+
+    public function getAll(string $endpoint, array $params = []): array
+    {
+        $allItems = [];
+        $page = 1;
+        $limit = 250;
+
+        do {
+            $params['page'] = $page;
+            $params['limit'] = $limit;
+            
+            $response = $this->get($endpoint, $params);
+            
+            if (strpos($endpoint, '/') !== false) {
+                $parts = explode('/', $endpoint);
+                $entity = end($parts);
+                $items = $response['_embedded'][$entity] ?? $response ?? [];
+            } else {
+                $items = $response['_embedded'][$endpoint] ?? [];
+            }
+            
+            if (empty($items)) {
+                break;
+            }
+
+            $allItems = array_merge($allItems, $items);
+            $page++;
+        } while (count($items) >= $limit);
+
+        return $allItems;
     }
 
     private function buildUrl(string $endpoint, array $params = []): string
@@ -210,8 +230,7 @@ class AmoCrmV4Client
 
         $this->handleHttpErrors($httpCode, $response);
         
-        // Задержка для соблюдения лимитов API
-        usleep(250000);
+        usleep(250000); // Задержка для API
 
         return json_decode($response, true) ?? [];
     }
@@ -234,39 +253,5 @@ class AmoCrmV4Client
 
         $errorMessage = $errors[$httpCode] ?? "Unknown error (HTTP {$httpCode})";
         throw new Exception("API Error: {$errorMessage}. Response: {$response}", $httpCode);
-    }
-
-    public function getAll(string $endpoint, array $params = []): array
-    {
-        $allItems = [];
-        $page = 1;
-        $limit = 250;
-
-        do {
-            $params['page'] = $page;
-            $params['limit'] = $limit;
-            
-            $response = $this->get($endpoint, $params);
-            
-            // Для вложенных эндпоинтов типа leads/{id}/notes
-            if (strpos($endpoint, '/') !== false) {
-                // Разбиваем эндпоинт на части
-                $parts = explode('/', $endpoint);
-                $entity = end($parts); // 'notes'
-                $items = $response['_embedded'][$entity] ?? $response ?? [];
-            } else {
-                // Для простых эндпоинтов типа 'leads', 'contacts'
-                $items = $response['_embedded'][$endpoint] ?? [];
-            }
-            
-            if (empty($items)) {
-                break;
-            }
-
-            $allItems = array_merge($allItems, $items);
-            $page++;
-        } while (count($items) >= $limit);
-
-        return $allItems;
     }
 }

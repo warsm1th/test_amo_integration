@@ -1,28 +1,26 @@
 <?php
+declare(strict_types=1);
+
 namespace App\Services;
 
-use App\Client\AmoCrmV4Client;
+use App\Repositories\TaskRepository;
 
-/**
- * Сервис для работы с задачами
- */
 class TaskService
 {
-    private AmoCrmV4Client $amoClient;
-
-    public function __construct(AmoCrmV4Client $amoClient)
-    {
-        $this->amoClient = $amoClient;
-    }
-
+    public function __construct(
+        private readonly TaskRepository $taskRepository
+    ) {}
+    
     public function getLeadTasks(int $leadId): array
     {
-        return $this->amoClient->getAll('tasks', [
-            "filter[entity_id]" => $leadId,
-            "filter[entity_type]" => "leads"
-        ]);
+        try {
+            return $this->taskRepository->findByEntityId($leadId, 'leads');
+        } catch (\Exception $e) {
+            error_log("Ошибка получения задач для сделки {$leadId}: " . $e->getMessage());
+            return [];
+        }
     }
-
+    
     public function copyTasks(int $sourceLeadId, int $targetLeadId): int
     {
         $tasks = $this->getLeadTasks($sourceLeadId);
@@ -43,25 +41,23 @@ class TaskService
             return 0;
         }
 
-        $this->amoClient->post('tasks', $preparedTasks);
-        return count($preparedTasks);
+        return $this->taskRepository->batchCreate($preparedTasks);
     }
-
+    
     private function prepareTaskForCopy(array $task, int $targetLeadId): ?array
     {
-        // Обработка текста задачи - обязательное поле
-        if (empty($task['text']) || trim($task['text']) === '') {
-            $taskText = 'Задача из сделки-донора';
+        // Обязательные поля
+        if (empty($task['text'] ?? '')) {
+            $taskText = 'Задача из сделки-донора (ID: ' . $targetLeadId . ')';
         } else {
             $taskText = $task['text'];
         }
 
-        // Тип задачи по умолчанию
         $taskTypeId = $task['task_type_id'] ?? 1;
-
+        
         // Обработка даты выполнения
         if (empty($task['complete_till'])) {
-            $completeTill = time() + 86400;
+            $completeTill = time() + 86400; // Завтра
         } else {
             $completeTill = $task['complete_till'];
             
